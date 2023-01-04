@@ -1,3 +1,5 @@
+use rand::random;
+
 pub const SCREEN_WIDTH: usize = 64;
 pub const SCREEN_HEIGHT: usize = 32;
 
@@ -127,6 +129,43 @@ impl Emulator {
         self.screen = [false; SCREEN_HEIGHT * SCREEN_WIDTH];
     }
 
+    // https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#dxyn-display
+    fn draw(&mut self, register_1: u16, register_2: u16, height: u16) {
+        // coordinates indicate where the sprite will be drawed
+        let x = self.v_reg[register_1 as usize] as u16;
+        let y = self.v_reg[register_2 as usize] as u16;
+
+        // Keep track if any pixels were flipped
+        let mut flipped = false;
+        for row in 0..height {
+            // Load pixels from sprite, address is stores on i_reg
+            let address = self.i_reg + row as u16;
+            let pixels = self.ram[address as usize];
+
+            // In CHIP-8, all sprites are 8 pixels wide
+            for column in 0..8 {
+                // Use a mask to fetch current pixel's bit, only flip if a 1 (check if is necessary to draw or not)
+                if (pixels & (0b1000_0000 >> row)) != 0 {
+                    // Sprites should clip around screen, so apply modulo
+                    let current_x = (x + column) as usize % SCREEN_WIDTH;
+                    let current_y = (y + row) as usize % SCREEN_HEIGHT;
+
+                    // Get our pixel's index for our 1D screen array
+                    let idx = SCREEN_WIDTH * current_y + current_x;
+                    flipped |= self.screen[idx];
+                    self.screen[idx] ^= true;
+                }
+            }
+        }
+
+        // Set flag if any bit was flipped
+        if flipped {
+            self.v_reg[0xF] = 1;
+        } else {
+            self.v_reg[0xF] = 0;
+        }
+    }
+
     fn execute(&mut self, op: u16) {
         let digit_1 = (op & 0xF000) >> 12;
         let digit_2 = (op & 0x0F00) >> 8;
@@ -134,28 +173,30 @@ impl Emulator {
         let digit_4 = op & 0x000F;
 
         match (digit_1, digit_2, digit_3, digit_4) {
-            (0, 0, 0, 0) => return,                      // NOP
-            (0, 0, 0xE, 0) => self.clear(),              // CLEAR SCREEN
-            (0, 0, 0xE, 0xE) => self.ret(),              // RET
-            (1, _, _, _) => self.jmp(op),                // JMP
-            (2, _, _, _) => self.call(op),               // CALL
-            (3, _, _, _) => self.seq(op, digit_2),       // SEQ
-            (4, _, _, _) => self.snq(op, digit_2),       // SNQ
-            (5, _, _, 0) => self.seqr(digit_2, digit_3), // SEQR
-            (6, _, _, _) => self.ld(op, digit_2),        // LD
-            (7, _, _, _) => self.addiw(op, digit_2),     // ADDIW
-            (8, _, _, 0) => self.mv(digit_2, digit_3),   // MV
-            (8, _, _, 1) => self.or(digit_2, digit_3),   // OR
-            (8, _, _, 2) => self.and(digit_2, digit_3),  // AND
-            (8, _, _, 3) => self.xor(digit_2, digit_3),  // XOR
-            (8, _, _, 4) => self.add(digit_2, digit_3),  // ADD
-            (8, _, _, 5) => self.sub(digit_2, digit_3),  // SUB
-            (8, _, _, 6) => self.shr(digit_2),           // SHR
-            (8, _, _, 7) => self.sub2(digit_2, digit_3), // SUB2
-            (8, _, _, 0xE) => self.shl(digit_2),         // SHL
-            (9, _, _, 0) => self.snqr(digit_2, digit_3), // SNQR
-            (0xA, _, _, _) => self.ldi(op),              // LDI
-            (0xB, _, _, _) => self.jmp2(op),             // JMP2
+            (0, 0, 0, 0) => return,                                 // NOP
+            (0, 0, 0xE, 0) => self.clear(),                         // CLEAR SCREEN
+            (0, 0, 0xE, 0xE) => self.ret(),                         // RET
+            (1, _, _, _) => self.jmp(op),                           // JMP
+            (2, _, _, _) => self.call(op),                          // CALL
+            (3, _, _, _) => self.seq(op, digit_2),                  // SEQ
+            (4, _, _, _) => self.snq(op, digit_2),                  // SNQ
+            (5, _, _, 0) => self.seqr(digit_2, digit_3),            // SEQR
+            (6, _, _, _) => self.ld(op, digit_2),                   // LD
+            (7, _, _, _) => self.addiw(op, digit_2),                // ADDIW
+            (8, _, _, 0) => self.mv(digit_2, digit_3),              // MV
+            (8, _, _, 1) => self.or(digit_2, digit_3),              // OR
+            (8, _, _, 2) => self.and(digit_2, digit_3),             // AND
+            (8, _, _, 3) => self.xor(digit_2, digit_3),             // XOR
+            (8, _, _, 4) => self.add(digit_2, digit_3),             // ADD
+            (8, _, _, 5) => self.sub(digit_2, digit_3),             // SUB
+            (8, _, _, 6) => self.shr(digit_2),                      // SHR
+            (8, _, _, 7) => self.sub2(digit_2, digit_3),            // SUB2
+            (8, _, _, 0xE) => self.shl(digit_2),                    // SHL
+            (9, _, _, 0) => self.snqr(digit_2, digit_3),            // SNQR
+            (0xA, _, _, _) => self.ldi(op),                         // LDI
+            (0xB, _, _, _) => self.jmp2(op),                        // JMP2
+            (0xC, _, _, _) => self.rnd(op, digit_2),                // RND
+            (0xD, _, _, _) => self.draw(digit_2, digit_3, digit_4), // DRAW
 
             (_, _, _, _) => unimplemented!("Unimplemented op code: { }", op),
         }
@@ -223,6 +264,14 @@ impl Emulator {
     fn ret(&mut self) {
         let ret_address = self.pop();
         self.pc = ret_address;
+    }
+
+    fn rnd(&mut self, op: u16, register: u16) {
+        let r1 = register as usize;
+        let value = (op & 0xFF) as u8;
+
+        let rng: u8 = random();
+        self.v_reg[r1] = rng & value;
     }
 
     // SEQ: skip if register equal to value
