@@ -89,12 +89,26 @@ impl Emulator {
         }
     }
 
-    fn addi(&mut self, op: u16, register: u16) {
+    // ADD: register_1 += register_2, with carry
+    fn add(&mut self, register_1: u16, register_2: u16) {
+        let r1 = register_1 as usize;
+        let r2 = register_2 as usize;
+
+        let (result, carry) = self.v_reg[r1].overflowing_add(self.v_reg[r2]);
+        let vf = if carry { 1 } else { 0 }; // VF is the flag register in CHIP-8, indicating carry (overflow)
+
+        self.v_reg[r1] = result;
+        self.v_reg[0xF] = vf;
+    }
+
+    // ADDIW: register_1 += value, wrapped add
+    fn addiw(&mut self, op: u16, register: u16) {
         let r1 = register as usize;
         let value = (op & 0xFF) as u8;
         self.v_reg[r1] = self.v_reg[r1].wrapping_add(value);
     }
 
+    // AND: register &= register_2
     fn and(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
@@ -108,7 +122,8 @@ impl Emulator {
         self.pc = address;
     }
 
-    fn clean(&mut self) {
+    // CLEAR => clear screen
+    fn clear(&mut self) {
         self.screen = [false; SCREEN_HEIGHT * SCREEN_WIDTH];
     }
 
@@ -120,19 +135,27 @@ impl Emulator {
 
         match (digit_1, digit_2, digit_3, digit_4) {
             (0, 0, 0, 0) => return,                      // NOP
-            (0, 0, 0xE, 0) => self.clean(),              // CLEAR SCREEN
+            (0, 0, 0xE, 0) => self.clear(),              // CLEAR SCREEN
             (0, 0, 0xE, 0xE) => self.ret(),              // RET
             (1, _, _, _) => self.jmp(op),                // JMP
             (2, _, _, _) => self.call(op),               // CALL
             (3, _, _, _) => self.seq(op, digit_2),       // SEQ
             (4, _, _, _) => self.snq(op, digit_2),       // SNQ
             (5, _, _, 0) => self.seqr(digit_2, digit_3), // SEQR
-            (6, _, _, _) => self.set(op, digit_2),       // SET
-            (7, _, _, _) => self.addi(op, digit_2),      // ADDI
-            (8, _, _, 0) => self.setr(digit_2, digit_3), // SETR
+            (6, _, _, _) => self.ld(op, digit_2),        // LD
+            (7, _, _, _) => self.addiw(op, digit_2),     // ADDIW
+            (8, _, _, 0) => self.mv(digit_2, digit_3),   // MV
             (8, _, _, 1) => self.or(digit_2, digit_3),   // OR
             (8, _, _, 2) => self.and(digit_2, digit_3),  // AND
             (8, _, _, 3) => self.xor(digit_2, digit_3),  // XOR
+            (8, _, _, 4) => self.add(digit_2, digit_3),  // ADD
+            (8, _, _, 5) => self.sub(digit_2, digit_3),  // SUB
+            (8, _, _, 6) => self.shr(digit_2),           // SHR
+            (8, _, _, 7) => self.sub2(digit_2, digit_3), // SUB2
+            (8, _, _, 0xE) => self.shl(digit_2),         // SHL
+            (9, _, _, 0) => self.snqr(digit_2, digit_3), // SNQR
+            (0xA, _, _, _) => self.ldi(op),              // LDI
+            (0xB, _, _, _) => self.jmp2(op),             // JMP2
 
             (_, _, _, _) => unimplemented!("Unimplemented op code: { }", op),
         }
@@ -153,6 +176,33 @@ impl Emulator {
         self.pc = address;
     }
 
+    // JMP2: jump to address encoded in op code + V0
+    fn jmp2(&mut self, op: u16) {
+        let address = op & 0xFFF;
+        self.pc = (self.v_reg[0] as u16) + address;
+    }
+
+    // LD: The interpreter puts the value into register_1
+    fn ld(&mut self, op: u16, register: u16) {
+        let r1 = register as usize;
+        let value = (op & 0xFF) as u8;
+        self.v_reg[r1] = value;
+    }
+
+    // LDI: The value of register I is set to a value encoded in the opcode.
+    fn ldi(&mut self, op: u16) {
+        let address = op & 0xFFF;
+        self.i_reg = address;
+    }
+
+    // MV: Stores the value of register_2 in register_1
+    fn mv(&mut self, register_1: u16, register_2: u16) {
+        let r1 = register_1 as usize;
+        let r2 = register_2 as usize;
+        self.v_reg[r1] = self.v_reg[r2];
+    }
+
+    // OR: register_1 |= register_2
     fn or(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
@@ -184,18 +234,6 @@ impl Emulator {
         }
     }
 
-    fn set(&mut self, op: u16, register: u16) {
-        let r1 = register as usize;
-        let value = (op & 0xFF) as u8;
-        self.v_reg[r1] = value;
-    }
-
-    fn setr(&mut self, register_1: u16, register_2: u16) {
-        let r1 = register_1 as usize;
-        let r2 = register_2 as usize;
-        self.v_reg[r1] = self.v_reg[r2];
-    }
-
     // SEQE: skip if register_1 equal to register_2
     fn seqr(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
@@ -203,6 +241,25 @@ impl Emulator {
         if self.v_reg[r1] == self.v_reg[r2] {
             self.pc += 2;
         }
+    }
+
+    // SHL: shift-left value in register, add flag in the VF
+    fn shl(&mut self, register: u16) {
+        let r1 = register as usize;
+
+        let msb = (self.v_reg[r1] >> 7) & 1;
+        self.v_reg[r1] <<= 1;
+        self.v_reg[0xF] = msb; // set flag with the bit shifted
+    }
+
+    // SHL: shift-right value in register, add flag in the VF
+    fn shr(&mut self, register: u16) {
+        let r1 = register as usize;
+
+        //  Unfortunately, there isn’t a built-in Rust u8 operator to catch the dropped bit, so we will have to do it ourself
+        let lsb = self.v_reg[r1] & 1;
+        self.v_reg[r1] >>= 1;
+        self.v_reg[0xF] = lsb; // set flag with the bit shifted
     }
 
     // SNQ: skip if register not equal to value
@@ -214,6 +271,41 @@ impl Emulator {
         }
     }
 
+    // SNQR: skip if register_1 not equal to register_2
+    fn snqr(&mut self, register_1: u16, register_2: u16) {
+        let r1 = register_1 as usize;
+        let r2 = register_2 as usize;
+
+        if self.v_reg[r1] != self.v_reg[r2] {
+            self.pc += 2;
+        }
+    }
+
+    // SUB: register_1 -= register_2, with carry
+    fn sub(&mut self, register_1: u16, register_2: u16) {
+        let r1 = register_1 as usize;
+        let r2 = register_2 as usize;
+
+        let (result, borrow) = self.v_reg[r1].overflowing_sub(self.v_reg[r2]);
+        let vf = if borrow { 0 } else { 1 }; // VF is the flag register in CHIP-8, indicating borrow (underflow)
+
+        self.v_reg[r1] = result;
+        self.v_reg[0xF] = vf;
+    }
+
+    // SUB: register_2 -= register_1, with carry
+    fn sub2(&mut self, register_1: u16, register_2: u16) {
+        let r1 = register_1 as usize;
+        let r2 = register_2 as usize;
+
+        let (result, borrow) = self.v_reg[r2].overflowing_sub(self.v_reg[r1]);
+        let vf = if borrow { 0 } else { 1 }; // VF is the flag register in CHIP-8, indicating borrow (underflow)
+
+        self.v_reg[r1] = result;
+        self.v_reg[0xF] = vf;
+    }
+
+    // XOR: register_1 ^= register_2
     fn xor(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
