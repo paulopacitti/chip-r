@@ -4,7 +4,8 @@ pub const SCREEN_WIDTH: usize = 64;
 pub const SCREEN_HEIGHT: usize = 32;
 
 const RAM_SIZE: usize = 4096;
-const VREGS_SIZE: usize = 16;
+const NUM_REGS: usize = 16;
+const NUM_KEYS: usize = 16;
 const STACK_SIZE: usize = 16;
 const START_ADDR: u16 = 0x200;
 
@@ -35,7 +36,8 @@ pub struct Emulator {
     st: u8,  // sound timer
     ram: [u8; RAM_SIZE],
     screen: [bool; SCREEN_HEIGHT * SCREEN_WIDTH],
-    v_reg: [u8; VREGS_SIZE],
+    keys: [bool; NUM_KEYS],
+    v_reg: [u8; NUM_REGS],
     i_reg: u16,
     stack: [u16; STACK_SIZE],
 }
@@ -49,7 +51,8 @@ impl Emulator {
             st: 0,
             ram: [0; RAM_SIZE],
             screen: [false; SCREEN_HEIGHT * SCREEN_WIDTH],
-            v_reg: [0; VREGS_SIZE],
+            keys: [false; NUM_KEYS],
+            v_reg: [0; NUM_REGS],
             i_reg: 0,
             stack: [0; STACK_SIZE],
         };
@@ -66,7 +69,8 @@ impl Emulator {
         self.st = 0;
         self.ram = [0; RAM_SIZE];
         self.screen = [false; SCREEN_HEIGHT * SCREEN_WIDTH];
-        self.v_reg = [0; VREGS_SIZE];
+        self.keys = [false; NUM_KEYS];
+        self.v_reg = [0; NUM_REGS];
         self.i_reg = 0;
         self.stack = [0; STACK_SIZE];
 
@@ -91,7 +95,7 @@ impl Emulator {
         }
     }
 
-    // ADD: register_1 += register_2, with carry
+    /// ADD: register_1 += register_2, with carry
     fn add(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
@@ -103,28 +107,28 @@ impl Emulator {
         self.v_reg[0xF] = vf;
     }
 
-    // ADDIW: register_1 += value, wrapped add
+    /// ADDIW: register_1 += value, wrapped add
     fn addiw(&mut self, op: u16, register: u16) {
         let r1 = register as usize;
         let value = (op & 0xFF) as u8;
         self.v_reg[r1] = self.v_reg[r1].wrapping_add(value);
     }
 
-    // AND: register &= register_2
+    /// AND: register &= register_2
     fn and(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
         self.v_reg[r1] &= self.v_reg[r2];
     }
 
-    // CALL: call subroutine
+    /// CALL: call subroutine
     fn call(&mut self, op: u16) {
         let address = op & 0xFFF;
         self.push(self.pc);
         self.pc = address;
     }
 
-    // CLEAR => clear screen
+    /// CLEAR => clear screen
     fn clear(&mut self) {
         self.screen = [false; SCREEN_HEIGHT * SCREEN_WIDTH];
     }
@@ -197,6 +201,17 @@ impl Emulator {
             (0xB, _, _, _) => self.jmp2(op),                        // JMP2
             (0xC, _, _, _) => self.rnd(op, digit_2),                // RND
             (0xD, _, _, _) => self.draw(digit_2, digit_3, digit_4), // DRAW
+            (0xE, _, 9, 0xE) => self.skp(digit_2),                  //SKP
+            (0xE, _, 0xA, 1) => self.snp(digit_2),                  // SNP
+            (0xF, _, 0, 7) => self.ldt(digit_2),                    // LDT
+            (0xF, _, 0, 0xA) => self.wkp(digit_2),                  // WKP
+            (0xF, _, 1, 5) => self.sdt(digit_2),                    // SDT
+            (0xF, _, 1, 8) => self.sst(digit_2),                    // SST
+            (0xF, _, 1, 0xE) => self.iadd(digit_2),                 // IADD
+            (0xF, _, 2, 9) => self.ldf(digit_2),                    // LDF
+            (0xF, _, 3, 3) => self.sbcd(digit_2),                   // SBCD
+            (0xF, _, 5, 5) => self.strr(digit_2),                   // STRR,
+            (0xF, _, 6, 5) => self.ldr(digit_2),                    // LDR
 
             (_, _, _, _) => unimplemented!("Unimplemented op code: { }", op),
         }
@@ -211,39 +226,64 @@ impl Emulator {
         op
     }
 
-    // JMP: jump to address encoded in op code
+    /// IADD: increment register I with a offset stored in another register
+    fn iadd(&mut self, register: u16) {
+        let r1 = register as usize;
+        self.i_reg = self.i_reg.wrapping_add(self.v_reg[r1] as u16);
+    }
+
+    /// JMP: jump to address encoded in op code
     fn jmp(&mut self, op: u16) {
         let address = op & 0xFFF;
         self.pc = address;
     }
 
-    // JMP2: jump to address encoded in op code + V0
+    /// JMP2: jump to address encoded in op code + V0
     fn jmp2(&mut self, op: u16) {
         let address = op & 0xFFF;
         self.pc = (self.v_reg[0] as u16) + address;
     }
 
-    // LD: The interpreter puts the value into register_1
+    /// LD: The interpreter puts the value into register_1
     fn ld(&mut self, op: u16, register: u16) {
         let r1 = register as usize;
         let value = (op & 0xFF) as u8;
         self.v_reg[r1] = value;
     }
 
-    // LDI: The value of register I is set to a value encoded in the opcode.
+    /// LDI: The value of register I is set to a value encoded in the opcode.
     fn ldi(&mut self, op: u16) {
         let address = op & 0xFFF;
         self.i_reg = address;
     }
 
-    // MV: Stores the value of register_2 in register_1
+    /// LDF: load font address into register I
+    fn ldf(&mut self, register: u16) {
+        let r1 = register as usize;
+        self.i_reg = 5 * (self.v_reg[r1] as u16);
+    }
+
+    /// LDR: load a slice from the memory on the registers
+    fn ldr(&mut self, range: u16) {
+        for i in 0..=range {
+            self.v_reg[i as usize] = self.ram[(self.i_reg as usize) + (i as usize)];
+        }
+    }
+
+    /// LDT: load delta timer value in a register
+    fn ldt(&mut self, register: u16) {
+        let r1 = register as usize;
+        self.v_reg[r1] = self.dt;
+    }
+
+    /// MV: Stores the value of register_2 in register_1
     fn mv(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
         self.v_reg[r1] = self.v_reg[r2];
     }
 
-    // OR: register_1 |= register_2
+    /// OR: register_1 |= register_2
     fn or(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
@@ -260,12 +300,13 @@ impl Emulator {
         self.stack[self.sp as usize]
     }
 
-    // RET: Return from Subroutine
+    /// RET: Return from Subroutine
     fn ret(&mut self) {
         let ret_address = self.pop();
         self.pc = ret_address;
     }
 
+    /// RND: generate a random number with a bitwise AND base on a register value and store the result in the same register
     fn rnd(&mut self, op: u16, register: u16) {
         let r1 = register as usize;
         let value = (op & 0xFF) as u8;
@@ -274,7 +315,27 @@ impl Emulator {
         self.v_reg[r1] = rng & value;
     }
 
-    // SEQ: skip if register equal to value
+    /// SBCD: store the BCD value of a register in memory.
+    fn sbcd(&mut self, register: u16) {
+        let r1 = register as usize;
+        let value = self.v_reg[r1] as f32;
+
+        let hundreds = (value / 100.0).floor() as u8;
+        let tens = ((value / 10.0) % 10.0).floor() as u8;
+        let ones = (value / 10.0).floor() as u8;
+
+        self.ram[self.i_reg as usize] = hundreds;
+        self.ram[(self.i_reg + 1) as usize] = tens;
+        self.ram[(self.i_reg + 2) as usize] = ones;
+    }
+
+    /// SDT: set/store delta timer.
+    fn sdt(&mut self, register: u16) {
+        let r1 = register as usize;
+        self.dt = self.v_reg[r1];
+    }
+
+    /// SEQ: skip if register equal to value.
     fn seq(&mut self, op: u16, register: u16) {
         let r1 = register as usize;
         let value = (op & 0xFFF) as u8;
@@ -283,7 +344,7 @@ impl Emulator {
         }
     }
 
-    // SEQE: skip if register_1 equal to register_2
+    /// SEQE: skip if register_1 equal to register_2.
     fn seqr(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
@@ -292,7 +353,7 @@ impl Emulator {
         }
     }
 
-    // SHL: shift-left value in register, add flag in the VF
+    /// SHL: shift-left value in register, add flag in the VF.
     fn shl(&mut self, register: u16) {
         let r1 = register as usize;
 
@@ -301,7 +362,7 @@ impl Emulator {
         self.v_reg[0xF] = msb; // set flag with the bit shifted
     }
 
-    // SHL: shift-right value in register, add flag in the VF
+    /// SHL: shift-right value in register, add flag in the VF.
     fn shr(&mut self, register: u16) {
         let r1 = register as usize;
 
@@ -311,7 +372,25 @@ impl Emulator {
         self.v_reg[0xF] = lsb; // set flag with the bit shifted
     }
 
-    // SNQ: skip if register not equal to value
+    /// SKP: skip if key is pressed.
+    fn skp(&mut self, register: u16) {
+        let r1 = register as usize;
+        let key = self.keys[self.v_reg[r1] as usize];
+        if key {
+            self.pc += 2;
+        }
+    }
+
+    /// SNP: skip if key is not pressed.
+    fn snp(&mut self, register: u16) {
+        let r1 = register as usize;
+        let key = self.keys[self.v_reg[r1] as usize];
+        if !key {
+            self.pc += 2;
+        }
+    }
+
+    /// SNQ: skip if register not equal to value.
     fn snq(&mut self, op: u16, register: u16) {
         let r1 = register as usize;
         let value = (op & 0xFFF) as u8;
@@ -320,7 +399,7 @@ impl Emulator {
         }
     }
 
-    // SNQR: skip if register_1 not equal to register_2
+    /// SNQR: skip if register_1 not equal to register_2.
     fn snqr(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
@@ -330,7 +409,20 @@ impl Emulator {
         }
     }
 
-    // SUB: register_1 -= register_2, with carry
+    /// STRR: store a range of registers values in memory.
+    fn strr(&mut self, range: u16) {
+        for i in 0..=range {
+            self.ram[(self.i_reg as usize) + (i as usize)] = self.v_reg[i as usize];
+        }
+    }
+
+    /// SDT: set/store sound timer.
+    fn sst(&mut self, register: u16) {
+        let r1 = register as usize;
+        self.st = self.v_reg[r1];
+    }
+
+    /// SUB: register_1 -= register_2, with carry.
     fn sub(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
@@ -342,7 +434,7 @@ impl Emulator {
         self.v_reg[0xF] = vf;
     }
 
-    // SUB: register_2 -= register_1, with carry
+    /// SUB: register_2 -= register_1, with carry.
     fn sub2(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
@@ -354,7 +446,25 @@ impl Emulator {
         self.v_reg[0xF] = vf;
     }
 
-    // XOR: register_1 ^= register_2
+    // WKP: wait for key to be pressed.
+    fn wkp(&mut self, register: u16) {
+        let r1 = register as usize;
+        let mut pressed = false;
+        for i in 0..self.keys.len() {
+            if self.keys[i] {
+                self.v_reg[r1] = i as u8;
+                pressed = true;
+                break;
+            }
+        }
+
+        if !pressed {
+            // Redo opcode
+            self.pc -= 2;
+        }
+    }
+
+    /// XOR: register_1 ^= register_2.
     fn xor(&mut self, register_1: u16, register_2: u16) {
         let r1 = register_1 as usize;
         let r2 = register_2 as usize;
