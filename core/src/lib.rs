@@ -164,7 +164,7 @@ impl Emulator {
             // In CHIP-8, all sprites are 8 pixels wide
             for column in 0..8 {
                 // Use a mask to fetch current pixel's bit, only flip if a 1 (check if is necessary to draw or not)
-                if (pixels & (0b1000_0000 >> row)) != 0 {
+                if (pixels & (0b1000_0000 >> column)) != 0 {
                     // Sprites should clip around screen, so apply modulo
                     let current_x = (x + column) as usize % SCREEN_WIDTH;
                     let current_y = (y + row) as usize % SCREEN_HEIGHT;
@@ -337,7 +337,7 @@ impl Emulator {
 
         let hundreds = (value / 100.0).floor() as u8;
         let tens = ((value / 10.0) % 10.0).floor() as u8;
-        let ones = (value / 10.0).floor() as u8;
+        let ones = (value % 10.0).floor() as u8;
 
         self.ram[self.i_reg as usize] = hundreds;
         self.ram[(self.i_reg + 1) as usize] = tens;
@@ -353,7 +353,7 @@ impl Emulator {
     /// SEQ: skip if register equal to value.
     fn seq(&mut self, op: u16, register: u16) {
         let r1 = register as usize;
-        let value = (op & 0xFFF) as u8;
+        let value = (op & 0xFF) as u8;
         if self.v_reg[r1] == value {
             self.pc += 2;
         }
@@ -408,7 +408,7 @@ impl Emulator {
     /// SNQ: skip if register not equal to value.
     fn snq(&mut self, op: u16, register: u16) {
         let r1 = register as usize;
-        let value = (op & 0xFFF) as u8;
+        let value = (op & 0xFF) as u8;
         if self.v_reg[r1] != value {
             self.pc += 2;
         }
