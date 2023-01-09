@@ -1,6 +1,5 @@
 # chip-r 🎱
-> 
-_"[...] maybe the games don’t have to be more complex, they need to be simple and pleasing. That’s where the sweet spot is!"_ - Allan Alcorn
+> _"[...] maybe the games don’t have to be more complex, they need to be simple and pleasing. That’s where the sweet spot is!"_ - Allan Alcorn
 
 ![](https://raw.githubusercontent.com/paulopacitti/chip-r/main/docs/screenshot.png)
 
