@@ -10,6 +10,21 @@
  - Compile `core`: `cd core && cargo build`
  - Compile and **run** the emulator: `cd frontend && cargo run <path-to-rom>`
 
+ ### Controls
+ Controls in CHIP-8 implementations are based on a 4x4 keyboard. In `chip-r`, these are the controls:
+```
+Keyboard           
+|---|---|---|---|
+| 1 | 2 | 3 | 4 |
+|---|---|---|---|
+| Q | W | E | R |
+|---|---|---|---|
+| A | S | D | F |
+|---|---|---|---|
+| Z | X | C | V |
+|---|---|---|---|
+```
+
  ### Resources
  - I've built this to learn about emulation development and learn more about `rust`. Here's the guide that helped me through this journey: https://github.com/aquova/chip8-book
  - `CHIP-8` op codes cheatsheet: http://devernay.free.fr/hacks/chip8/C8TECH10.HTM
