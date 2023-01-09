@@ -88,7 +88,7 @@ fn draw_screen(emu: &Emulator, canvas: &mut Canvas<Window>) {
     canvas.clear();
 
     let screen_buffer = emu.get_display();
-    canvas.set_draw_color(Color::RGB(255, 255, 255));
+    canvas.set_draw_color(Color::RGB(0, 255, 0));
     for (i, pixel) in screen_buffer.iter().enumerate() {
         if *pixel {
             // Convert our 1D array's index into a 2D (x,y) position
